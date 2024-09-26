@@ -219,7 +219,13 @@ static int ws_callback_echo(struct lws *wsi, enum lws_callback_reasons reason, v
             destroy_flag = 1;
             connection_flag = 0;
             break;
-
+	case LWS_CALLBACK_CLIENT_CLOSED:
+            printf("[Main Service] Websocket connection closed\n");
+            //Set flags
+            destroy_flag = 1;
+            connection_flag = 0;
+            break;
+            
         default:
             break;
     }
