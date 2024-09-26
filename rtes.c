@@ -9,9 +9,9 @@
 #include <time.h>
 
 //Number of threads which is also the number of symbols
-#define NUM_THREADS 2 // the maximum number of trades that can be handled at once
+#define NUM_THREADS 10 // the maximum number of trades that can be handled at once
 #define NUM_SYMBOLS 3
-#define BUFFER_SIZE 2048
+#define BUFFER_SIZE 1024
 
 // Global mutex
 pthread_mutex_t mutex;
@@ -106,24 +106,26 @@ static void websocket_write_back(struct lws *wsi) {
     }
 
     char *out = NULL;
-    char str[100];
-
+    char str[BUFFER_SIZE + 34];
+	
+	pthread_mutex_lock(&mutex);
     for(int i = 0; i < NUM_SYMBOLS; i++){
-        sprintf(str, "{\"type\":\"subscribe\",\"symbol\":\"%s\"}\n", symbols[i].symbol);
+        snprintf(str, sizeof(str), "{\"type\":\"subscribe\",\"symbol\":\"%s\"}\n", symbols[i].symbol);
         //Printing the subscription request
         printf("Websocket write back: %s\n", str);
         int len = strlen(str);
         out = (char *)malloc(sizeof(char)*(LWS_SEND_BUFFER_PRE_PADDING + len + LWS_SEND_BUFFER_POST_PADDING));
         memcpy(out + LWS_SEND_BUFFER_PRE_PADDING, str, len);
-        lws_write(wsi, out+LWS_SEND_BUFFER_PRE_PADDING, len, LWS_WRITE_TEXT);
+        lws_write(wsi, (unsigned char *) (out+LWS_SEND_BUFFER_PRE_PADDING), len, LWS_WRITE_TEXT);
     }
+    pthread_mutex_unlock(&mutex);
     
     //Free the memory
     free(out);
 }
 
 // A callback function that handles different websocket events
-static int ws_callback_echo(struct lws *wsi, enum lws_callback_reasons reason, void *user, char *in, size_t len) {
+static int ws_callback_echo(struct lws *wsi, enum lws_callback_reasons reason, void *user, void *in, size_t len) {
     switch (reason) {
     	//This case is called when the connection is established
     	case LWS_CALLBACK_CLIENT_ESTABLISHED:
@@ -133,7 +135,7 @@ static int ws_callback_echo(struct lws *wsi, enum lws_callback_reasons reason, v
             break;
         //This case is called when there is an error in the connection
         case LWS_CALLBACK_CLIENT_CONNECTION_ERROR:
-            printf("[Main Service] Client Connection Error: %s.\n", in);
+            printf("[Main Service] Client Connection Error: %s.\n", (char *)in);
             //Set flags
             destroy_flag = 1;
             connection_flag = 0;
@@ -183,7 +185,13 @@ static int ws_callback_echo(struct lws *wsi, enum lws_callback_reasons reason, v
 						temp->volume = volume;
 						temp->timestamp = timestamp;
 
-						pthread_create(&producers[i], NULL, producer_thread, (void *)temp);
+						int result = pthread_create(&producers[i], NULL, producer_thread, (void *)temp);
+						// Check if thread creation was successful
+						if (result != 0) {
+							fprintf(stderr, "Error creating thread: %d\n", result);
+							free(temp);
+						}
+						
 						threads_created++;
                     }
                     // Exit loop when maximum amount of threads is created to avoid stack smashing
@@ -410,7 +418,7 @@ int process_trades(const char *trade_file, const char *cand_file, const char *mo
 
     data_array = json_object_get(root, "data");
 
-    double prices_1[100], volumes_1[100], prices_15[100], volumes_15[100];
+    double prices_1[BUFFER_SIZE], volumes_1[BUFFER_SIZE], prices_15[BUFFER_SIZE], volumes_15[BUFFER_SIZE];
     size_t index_1 = 0, index_15 = 0;
 
     size_t index;
@@ -418,12 +426,12 @@ int process_trades(const char *trade_file, const char *cand_file, const char *mo
         long long t = json_integer_value(json_object_get(trade, "t"));
         double p = json_real_value(json_object_get(trade, "p"));
         double v = json_real_value(json_object_get(trade, "v"));
-        if (t >= time_threshold_1 && t <= current_time) {
+        if (index_1 < BUFFER_SIZE && t >= time_threshold_1 && t <= current_time) {
             prices_1[index_1] = p;
             volumes_1[index_1] = v;
             index_1++;
         }
-        if (t >= time_threshold_15 && t <= current_time) {
+        if (index_15 < BUFFER_SIZE && t >= time_threshold_15 && t <= current_time) {
             prices_15[index_15] = p;
             volumes_15[index_15] = v;
             index_15++;
