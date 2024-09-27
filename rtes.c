@@ -9,7 +9,7 @@
 #include <time.h>
 
 //Number of threads which is also the number of symbols
-#define NUM_THREADS 10 // the maximum number of trades that can be handled at once
+#define NUM_THREADS 3 // the maximum number of trades that can be handled at once
 #define NUM_SYMBOLS 3
 #define BUFFER_SIZE 1024
 
@@ -55,7 +55,7 @@ typedef struct {
 
 // An array of SymbolData and the producer consumer threads
 SymbolData symbols[NUM_SYMBOLS];
-pthread_t producers[NUM_SYMBOLS], consumers[NUM_SYMBOLS];
+pthread_t producers[NUM_THREADS], consumers[NUM_SYMBOLS];
 
 // Initialize JSON files for each symbol
 void initialize_json(const char* symbol, SymbolData* data);
@@ -124,6 +124,19 @@ static void websocket_write_back(struct lws *wsi) {
     free(out);
 }
 
+static int ws_callback_echo(struct lws *wsi, enum lws_callback_reasons reason, void *user, void *in, size_t len);
+
+// Protocols used for the websocket
+static struct lws_protocols protocols[] = {
+    {
+        "example", //name
+        ws_callback_echo, //callback function
+        0, // user data size
+        0, // receive buffer size
+    },
+    { NULL, NULL, 0, 0 } // terminator
+};
+
 // A callback function that handles different websocket events
 static int ws_callback_echo(struct lws *wsi, enum lws_callback_reasons reason, void *user, void *in, size_t len) {
     switch (reason) {
@@ -170,7 +183,7 @@ static int ws_callback_echo(struct lws *wsi, enum lws_callback_reasons reason, v
 
             size_t index;
             json_t *value;
-            int threads_created = 0;
+            int tid = 0;
             json_array_foreach(data, index, value) {
                 const char *symbol = json_string_value(json_object_get(value, "s"));
                 double price = json_number_value(json_object_get(value, "p"));
@@ -185,22 +198,23 @@ static int ws_callback_echo(struct lws *wsi, enum lws_callback_reasons reason, v
 						temp->volume = volume;
 						temp->timestamp = timestamp;
 
-						int result = pthread_create(&producers[i], NULL, producer_thread, (void *)temp);
+						int result = pthread_create(&producers[tid], NULL, producer_thread, (void *)temp);
 						// Check if thread creation was successful
 						if (result != 0) {
 							fprintf(stderr, "Error creating thread: %d\n", result);
 							free(temp);
 						}
 						
-						threads_created++;
+						tid++;
                     }
                     // Exit loop when maximum amount of threads is created to avoid stack smashing
-                	if (threads_created >= NUM_THREADS) break;
+                	if (tid >= NUM_THREADS) break;
                     
                 }
                 // Exit loop when maximum amount of threads is created to avoid stack smashing
-                if (threads_created >= NUM_THREADS) break;
+                if (tid >= NUM_THREADS) break;
             }
+            
             json_decref(root);
             break;
 
@@ -211,20 +225,15 @@ static int ws_callback_echo(struct lws *wsi, enum lws_callback_reasons reason, v
             //Set flags
             writeable_flag = 1;
             break;
+		
+		
+        // This case is called when the connection is closed
+        case LWS_CALLBACK_CLIENT_CLOSED:
+            printf("[Main Service] WebSocket connection closed. Attempting to reconnect...\n");
+            destroy_flag = 1;
+            
+            break;
 
-        //This case is called when the connection is closed
-        case LWS_CALLBACK_CLOSED:
-            printf("[Main Service] Websocket connection closed\n");
-            //Set flags
-            destroy_flag = 1;
-            connection_flag = 0;
-            break;
-	case LWS_CALLBACK_CLIENT_CLOSED:
-            printf("[Main Service] Websocket connection closed\n");
-            //Set flags
-            destroy_flag = 1;
-            connection_flag = 0;
-            break;
             
         default:
             break;
@@ -232,16 +241,7 @@ static int ws_callback_echo(struct lws *wsi, enum lws_callback_reasons reason, v
     return 0;
 }
 
-// Protocols used for the websocket
-static struct lws_protocols protocols[] = {
-    {
-        "example", //name
-        ws_callback_echo, //callback function
-        0, // user data size
-        0, // receive buffer size
-    },
-    { NULL, NULL, 0, 0 } // terminator
-};
+
 
 int main(int argc, char **argv) {
 	// Initialize the mutex
@@ -353,9 +353,11 @@ void initialize_json(const char* symbol, SymbolData* data) {
     snprintf(data->trade_file, BUFFER_SIZE, "%s.json", symbol);
     snprintf(data->cand_file, BUFFER_SIZE, "%s_cand.json", symbol);
     snprintf(data->mov_file, BUFFER_SIZE, "%s_mov.json", symbol);
-
+	
+	/*
     const char* types[] = {"trade", "candlestick", "moving_average"};
     const char* file_names[] = {data->trade_file, data->cand_file, data->mov_file};
+	
 	
 	// Loop to delete existing files if they exist
     for (int i = 0; i < 3; i++) {
@@ -379,6 +381,7 @@ void initialize_json(const char* symbol, SymbolData* data) {
         }
         json_decref(json_obj);
     }
+    */
     printf("Main: Initialized %s JSON files\n", symbol);
 }
 
@@ -392,7 +395,7 @@ void add_trade_sample(const char* file_path, double price, const char* symbol, l
     if (!root) {
         printf("Error loading %s JSON: %s\n", file_path, error.text);
         fclose(file);
-        return;
+        exit(1);
     }
 
     json_t* data_array = json_object_get(root, "data");
@@ -419,7 +422,7 @@ int process_trades(const char *trade_file, const char *cand_file, const char *mo
     root = json_load_file(trade_file, 0, &error);
     if (!root) {
         fprintf(stderr, "Error loading %s JSON: %s\n", trade_file, error.text);
-        return -1;
+        exit(1);
     }
 
     data_array = json_object_get(root, "data");
@@ -463,7 +466,7 @@ int process_trades(const char *trade_file, const char *cand_file, const char *mo
         if (!cand_root) {
             fprintf(stderr, "Error loading candlestick JSON: %s\n", error.text);
             json_decref(root);
-            return -1;
+            exit(1);
         }
 
         json_t *cand_data = json_object_get(cand_root, "data");
@@ -495,7 +498,7 @@ int process_trades(const char *trade_file, const char *cand_file, const char *mo
         if (!mov_root) {
             fprintf(stderr, "Error loading moving average JSON: %s\n", error.text);
             json_decref(root);
-            return -1;
+            exit(1);
         }
 
         json_t *mov_data = json_object_get(mov_root, "data");
