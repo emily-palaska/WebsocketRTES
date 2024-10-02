@@ -18,7 +18,7 @@ Dummy programm to simulate the receiving of thread in order to create functions 
 Similar to json_operations.c but also incorporating the producer-consumer dynamic using the Pthreads library
 
 ### rtes.c and rtes
-This is the final code and executable, compiled with aarch64-linux-gnu-gcc
+This is the final code and binary executable, compiled with aarch64-linux-gnu-gcc
 
 ### run.sh
 Auxiliary bash script to re-establish the WebSocket connection when lost
