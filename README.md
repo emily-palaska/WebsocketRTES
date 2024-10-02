@@ -20,3 +20,8 @@ Similar to json_operations.c but also incorporating the producer-consumer dynami
 ### rtes.c and rtes
 This is the final code and executable, compiled with aarch64-linux-gnu-gcc
 
+### run.sh
+Auxiliary bash script to re-establish the WebSocket connection when lost
+
+### graph.py
+Quick pyhthon scipt that exports the necessary graphs for the report
